@@ -175,6 +175,10 @@ conciliacao-financeira/
 └── tests/                   # testes com pytest
 ```
 
+## Em desenvolvimento
+
+- 🚧 **Vendas direto do Google Sheets (API):** em vez de enviar o Excel, o painel lerá a planilha de vendas do cliente no Google Sheets, e cada venda nova lançada aparecerá automaticamente, sem precisar enviar arquivo.
+
 ## Próximos passos
 
 - Ler o extrato direto no formato OFX, que os bancos também exportam.
