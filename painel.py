@@ -4,14 +4,17 @@ Painel visual da conciliação (Streamlit).
 Uso local:   streamlit run painel.py
 Na internet: publicado pelo Streamlit Community Cloud a partir do GitHub.
 
-Dá para usar os dados de exemplo ou enviar os seus arquivos. Os indicadores e as
-barras do gráfico são clicáveis e filtram a tabela de detalhes.
+Tem dois modos, escolhidos pela configuração MODO (Secrets do Streamlit ou variável de ambiente):
+  - "demonstracao" (padrão): para portfólio; abre com dados de exemplo de uma loja fictícia.
+  - "cliente": para uso real; não mostra exemplos e abre pedindo os arquivos do cliente.
+Os indicadores e as barras do gráfico são clicáveis e filtram a tabela de detalhes.
 """
 from __future__ import annotations
 
 import logging
 import os
 import re
+import io
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -61,35 +64,99 @@ def filtrar(valor: str) -> None:
     st.session_state["filtro"] = valor
 
 
-# ------------------------------------------------------------------ barra lateral
+def configuracao(chave: str, padrao: str = "") -> str:
+    """Lê uma configuração do Secrets do Streamlit ou, se não houver, das variáveis de ambiente."""
+    try:
+        if chave in st.secrets:
+            return str(st.secrets[chave])
+    except Exception:  # sem arquivo de secrets
+        pass
+    return os.environ.get(chave, padrao)
+
+
+MODO = configuracao("MODO", "demonstracao").strip().lower()
+MODO_CLIENTE = MODO == "cliente"
+NOME_CLIENTE = configuracao("NOME_CLIENTE")
+
+
+@st.cache_data
+def modelo_vendas() -> bytes:
+    """Planilha modelo, com as colunas que o sistema espera."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Vendas"
+    ws.append(["Código", "Data", "Cliente", "Valor (R$)", "Forma de Pagamento", "Status"])
+    ws.append(["VND-00001", "05/09/2026", "Maria Silva", "1.250,90", "PIX", "Faturada"])
+    ws.append(["VND-00002", "06/09/2026", "João Souza", "389,00", "Boleto", "Cancelada"])
+    for coluna, largura in zip("ABCDEF", (12, 12, 22, 12, 20, 12)):
+        ws.column_dimensions[coluna].width = largura
+    saida = io.BytesIO()
+    wb.save(saida)
+    return saida.getvalue()
+
+
+def modelo_extrato() -> bytes:
+    linhas = ["Data;Histórico;Documento;Valor",
+              "05/09/2026;PIX RECEBIDO - VND-00001 MARIA;123456;1.250,90",
+              "06/09/2026;TARIFA BANCARIA;000001;-19,90"]
+    return ("\n".join(linhas) + "\n").encode("latin-1")
+
+
+# ------------------------------------------------------------------ parâmetros (barra lateral)
 with st.sidebar:
-    st.header("Arquivos")
-    origem = st.radio("Dados", ["Usar dados de exemplo", "Enviar meus arquivos"])
-    if origem == "Enviar meus arquivos":
-        arq_vendas = st.file_uploader("Planilha de vendas (.xlsx)", type="xlsx")
-        arq_extrato = st.file_uploader("Extrato bancário (.csv)", type="csv")
-        st.caption("Os arquivos ficam só na memória durante a análise e não são guardados.")
-    st.header("Parâmetros")
-    data_ref = st.date_input("Data de referência", value=date(2026, 9, 30), format="DD/MM/YYYY",
+    if not MODO_CLIENTE:
+        st.header("Dados")
+        origem = st.radio("Origem", ["Usar dados de exemplo", "Enviar meus arquivos"], label_visibility="collapsed")
+    st.header("Ajustes")
+    data_ref = st.date_input("Data de referência",
+                             value=date.today() if MODO_CLIENTE else date(2026, 9, 30), format="DD/MM/YYYY",
                              help="Usada para calcular há quantos dias cada venda está sem pagamento.")
     tolerancia = st.number_input("Tolerância (R$)", min_value=0.0, step=0.05, value=0.0,
                                  help="Diferenças até esse valor contam como conciliadas.")
 
-if origem == "Usar dados de exemplo":
+titulo = f"Conciliação financeira · {NOME_CLIENTE}" if NOME_CLIENTE else "Conciliação financeira"
+titulo_exibido = False
+
+# ------------------------------------------------------------------ envio dos arquivos
+if MODO_CLIENTE or origem == "Enviar meus arquivos":
+    enviados = bool(st.session_state.get("up_vendas")) and bool(st.session_state.get("up_extrato"))
+    st.title(titulo)
+    titulo_exibido = True
+    if not enviados:
+        st.write("Confira em poucos segundos se todas as suas vendas foram pagas. "
+                 "É só enviar os dois arquivos abaixo.")
+    with st.expander("Arquivos enviados ✓" if enviados else "Envie seus arquivos", expanded=not enviados):
+        c1, c2 = st.columns(2, gap="large")
+        with c1:
+            st.markdown("**1. Planilha de vendas** (Excel)")
+            arq_vendas = st.file_uploader("Planilha de vendas", type="xlsx", key="up_vendas",
+                                          label_visibility="collapsed")
+            st.download_button("Baixar modelo da planilha", modelo_vendas(), "modelo_vendas.xlsx",
+                               key="modelo_v")
+        with c2:
+            st.markdown("**2. Extrato do banco** (CSV)")
+            arq_extrato = st.file_uploader("Extrato do banco", type="csv", key="up_extrato",
+                                           label_visibility="collapsed")
+            st.download_button("Baixar modelo do extrato", modelo_extrato(), "modelo_extrato.csv",
+                               key="modelo_e")
+        st.caption("Os arquivos são usados só durante a análise e não ficam guardados. "
+                   "No extrato, o código da venda (ex.: VND-00001) precisa aparecer no histórico do pagamento.")
+    if not (arq_vendas and arq_extrato):
+        st.stop()
+    vendas_bytes, extrato_bytes = arq_vendas.getvalue(), arq_extrato.getvalue()
+else:
     if not EXEMPLO_VENDAS.exists():
         st.error("Dados de exemplo não encontrados. Rode antes: `python dados/gerar_dados.py`")
         st.stop()
     vendas_bytes, extrato_bytes = EXEMPLO_VENDAS.read_bytes(), EXEMPLO_EXTRATO.read_bytes()
-else:
-    if not (arq_vendas and arq_extrato):
-        st.info("Envie a planilha de vendas e o extrato na barra lateral.")
-        st.stop()
-    vendas_bytes, extrato_bytes = arq_vendas.getvalue(), arq_extrato.getvalue()
 
 try:
     resultado, invalidos, excel_bytes = conciliar(vendas_bytes, extrato_bytes, data_ref.isoformat(), tolerancia)
-except (KeyError, ValueError) as erro:
-    st.error(f"Não consegui ler os arquivos. Confira se as colunas estão no formato esperado ({erro}).")
+except Exception:
+    logging.exception("Falha ao ler os arquivos")
+    st.error("Não consegui ler os arquivos. Confira se eles seguem os modelos (as mesmas colunas, "
+             "com os mesmos nomes) e tente de novo.")
     st.stop()
 
 ind = pipeline.indicadores(resultado)
@@ -98,7 +165,11 @@ contagem = resultado["situacao"].value_counts().reindex(ORDEM_SITUACOES, fill_va
 st.session_state.setdefault("filtro", TODAS_PENDENCIAS)
 
 # ------------------------------------------------------------------ cabeçalho e indicadores
-st.title("Conciliação financeira")
+if not titulo_exibido:
+    st.title(titulo)
+if not MODO_CLIENTE and origem == "Usar dados de exemplo":
+    st.info("Demonstração com dados de uma loja fictícia. Para testar com os seus arquivos, "
+            "escolha **Enviar meus arquivos** na barra lateral.", icon="ℹ️")
 st.caption(f"Vendas x extrato bancário · referência {data_ref:%d/%m/%Y} · clique nos cartões ou nas barras para ver os detalhes")
 
 CSS_CARTOES = """

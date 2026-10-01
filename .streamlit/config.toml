@@ -1,0 +1,6 @@
+[client]
+# esconde o menu de desenvolvedor para quem usa o painel
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#2a78d6"

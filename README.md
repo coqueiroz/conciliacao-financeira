@@ -91,6 +91,17 @@ python main.py --data-referencia 2026-09-30    # roda a conciliação
 
 O relatório é salvo em `saida/conciliacao_2026-09-30.xlsx`, junto com o banco `conciliacao.db`, o log `execucao.log` e uma prévia do e-mail (`email_previa.html`).
 
+**Modo demonstração x modo cliente**
+
+O mesmo código roda de dois jeitos, escolhidos pela configuração `MODO` (em *Settings > Secrets* no Streamlit Cloud):
+
+| `MODO` | Para quem | Como abre |
+|---|---|---|
+| `demonstracao` (padrão) | portfólio, recrutadores | com dados de exemplo de uma loja fictícia |
+| `cliente` | uso real | sem exemplos: pede a planilha de vendas e o extrato, com modelos para baixar |
+
+`NOME_CLIENTE` (opcional) coloca o nome da empresa no título do painel.
+
 **Enviar por e-mail pelo painel (sem Terminal)**
 
 Quem usa o sistema só digita o e-mail de destino no painel e clica em *Enviar resumo e relatório*. O remetente é configurado **uma única vez** por quem publica o sistema:
